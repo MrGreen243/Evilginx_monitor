@@ -1,111 +1,148 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"math/rand"
-	"os"
-	"path/filepath"
-	"sync"
-	"time"
-
+    "encoding/json"
+    "fmt"
+    "math/rand"
+    "os"
+    "path/filepath"
+    "sync"
+    "time"
 )
 
 type Token struct {
-	Name             string      `json:"name"`
-	Value            string      `json:"value"`
-	Domain           string      `json:"domain"`
-	HostOnly         bool        `json:"hostOnly"`
-	Path             string      `json:"path"`
-	Secure           bool        `json:"secure"`
-	HttpOnly         bool        `json:"httpOnly"`
-	SameSite         string      `json:"sameSite"`
-	Session          bool        `json:"session"`
-	FirstPartyDomain string      `json:"firstPartyDomain"`
-	PartitionKey     interface{} `json:"partitionKey"`
-	ExpirationDate   *int64       `json:"expirationDate,omitempty"`
-	StoreID          interface{} `json:"storeId"`
+    Name             string      `json:"name"`
+    Value            string      `json:"value"`
+    Domain           string      `json:"domain,omitempty"`
+    HostOnly         bool        `json:"hostOnly,omitempty"`
+    Path             string      `json:"path,omitempty"`
+    Secure           bool        `json:"secure,omitempty"`
+    HttpOnly         bool        `json:"httpOnly,omitempty"`
+    SameSite         string      `json:"sameSite,omitempty"`
+    Session          bool        `json:"session,omitempty"`
+    FirstPartyDomain string      `json:"firstPartyDomain,omitempty"`
+    PartitionKey     interface{} `json:"partitionKey,omitempty"`
+    ExpirationDate   *int64      `json:"expirationDate,omitempty"`
+    StoreID          interface{} `json:"storeId,omitempty"`
 }
 
-func extractTokens(input map[string]map[string]map[string]interface{}) []Token {
-	var tokens []Token
+// extractTokens handles two formats:
+// 1. Nested map format (original Office365 style tokens)
+// 2. Flat token list format [{ "token": "token_string" }, ...]
+func extractTokens(input interface{}) []Token {
+    var tokens []Token
 
-	for domain, tokenGroup := range input {
-		for _, tokenData := range tokenGroup {
-			var t Token
+    switch data := input.(type) {
+    case map[string]map[string]map[string]interface{}:
+        // Original nested parsing logic
+        for domain, tokenGroup := range data {
+            for _, tokenData := range tokenGroup {
+                var t Token
 
-			if name, ok := tokenData["Name"].(string); ok {
-				// Remove &
-				t.Name = name
-			}
-			if val, ok := tokenData["Value"].(string); ok {
-				t.Value = val
-			}
-			// Remove leading dot from domain
-			if len(domain) > 0 && domain[0] == '.' {
-				domain = domain[1:]
-			}
-			t.Domain = domain
+                if name, ok := tokenData["Name"].(string); ok {
+                    t.Name = name
+                }
+                if val, ok := tokenData["Value"].(string); ok {
+                    t.Value = val
+                }
+                if len(domain) > 0 && domain[0] == '.' {
+                    domain = domain[1:]
+                }
+                t.Domain = domain
 
-			if hostOnly, ok := tokenData["HostOnly"].(bool); ok {
-				t.HostOnly = hostOnly
-			}
-			if path, ok := tokenData["Path"].(string); ok {
-				t.Path = path
-			}
-			if secure, ok := tokenData["Secure"].(bool); ok {
-				t.Secure = secure
-			}
-			if httpOnly, ok := tokenData["HttpOnly"].(bool); ok {
-				t.HttpOnly = httpOnly
-			}
-			if sameSite, ok := tokenData["SameSite"].(string); ok {
-				t.SameSite = sameSite
-			}
-			if session, ok := tokenData["Session"].(bool); ok {
-				t.Session = session
-			}
-			if fpd, ok := tokenData["FirstPartyDomain"].(string); ok {
-				t.FirstPartyDomain = fpd
-			}
-			if pk, ok := tokenData["PartitionKey"]; ok {
-				t.PartitionKey = pk
-			}
-			
-			if storeID, ok := tokenData["storeId"]; ok {
-				t.StoreID = storeID
-			} else if storeID, ok := tokenData["StoreID"]; ok {
-				t.StoreID = storeID
-			}
+                if hostOnly, ok := tokenData["HostOnly"].(bool); ok {
+                    t.HostOnly = hostOnly
+                }
+                if path, ok := tokenData["Path"].(string); ok {
+                    t.Path = path
+                }
+                if secure, ok := tokenData["Secure"].(bool); ok {
+                    t.Secure = secure
+                }
+                if httpOnly, ok := tokenData["HttpOnly"].(bool); ok {
+                    t.HttpOnly = httpOnly
+                }
+                if sameSite, ok := tokenData["SameSite"].(string); ok {
+                    t.SameSite = sameSite
+                }
+                if session, ok := tokenData["Session"].(bool); ok {
+                    t.Session = session
+                }
+                if fpd, ok := tokenData["FirstPartyDomain"].(string); ok {
+                    t.FirstPartyDomain = fpd
+                }
+                if pk, ok := tokenData["PartitionKey"]; ok {
+                    t.PartitionKey = pk
+                }
+                if storeID, ok := tokenData["storeId"]; ok {
+                    t.StoreID = storeID
+                } else if storeID, ok := tokenData["StoreID"]; ok {
+                    t.StoreID = storeID
+                }
 
-			exp := time.Now().AddDate(1, 0, 0).Unix()
-			t.ExpirationDate = &exp
+                exp := time.Now().AddDate(1, 0, 0).Unix()
+                t.ExpirationDate = &exp
 
-			tokens = append(tokens, t)
-		}
-	}
-	return tokens
+                tokens = append(tokens, t)
+            }
+        }
+
+    case []interface{}:
+        // Handle flat token list format: [{"token":"token_string"}, ...]
+        for _, v := range data {
+            tokenMap, ok := v.(map[string]interface{})
+            if !ok {
+                continue // skip if format unexpected
+            }
+            t := Token{}
+            if tokenVal, ok := tokenMap["token"].(string); ok {
+                t.Name = "token"
+                t.Value = tokenVal
+
+                // Optional: add expiration date for consistency
+                exp := time.Now().AddDate(1, 0, 0).Unix()
+                t.ExpirationDate = &exp
+
+                tokens = append(tokens, t)
+            }
+        }
+
+    default:
+        // Unknown format; return empty list or could log an error
+    }
+    return tokens
 }
 
+// Accept token JSON strings or raw JSON bytes directly
 func processAllTokens(sessionTokens, httpTokens, bodyTokens, customTokens string) ([]Token, error) {
-	var consolidatedTokens []Token
+    var consolidatedTokens []Token
 
-	// Parse and extract tokens for each category
-	for _, tokenJSON := range []string{sessionTokens, httpTokens, bodyTokens, customTokens} {
-		if tokenJSON == "" {
-			continue
-		}
+    for _, tokenJSON := range []string{sessionTokens, httpTokens, bodyTokens, customTokens} {
+        if tokenJSON == "" {
+            continue
+        }
 
-		var rawTokens map[string]map[string]map[string]interface{}
-		if err := json.Unmarshal([]byte(tokenJSON), &rawTokens); err != nil {
-			return nil, fmt.Errorf("error parsing token JSON: %v", err)
-		}
+        // First attempt to parse as nested map[string]map[string]map...
+        var nested map[string]map[string]map[string]interface{}
+        if err := json.Unmarshal([]byte(tokenJSON), &nested); err == nil {
+            tokens := extractTokens(nested)
+            consolidatedTokens = append(consolidatedTokens, tokens...)
+            continue
+        }
 
-		tokens := extractTokens(rawTokens)
-		consolidatedTokens = append(consolidatedTokens, tokens...)
-	}
+        // Otherwise, try parse as flat list
+        var flat []interface{}
+        if err := json.Unmarshal([]byte(tokenJSON), &flat); err == nil {
+            tokens := extractTokens(flat)
+            consolidatedTokens = append(consolidatedTokens, tokens...)
+            continue
+        }
 
-	return consolidatedTokens, nil
+        // Could not parse token JSON, return error
+        return nil, fmt.Errorf("failed to parse token JSON for input: %s", tokenJSON)
+    }
+
+    return consolidatedTokens, nil
 }
 
 // Define a map to store session IDs and a mutex for thread-safe access
